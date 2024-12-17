@@ -1,83 +1,79 @@
 const http = require("http");
 const express = require("express");
+const WebSocket = require("ws");
 const app = express();
 
-app.use(express.static("public"));
-// require("dotenv").config();
+// Configuración de puerto
+const PORT = process.env.PORT || 3000;
 
-const serverPort = process.env.PORT || 3000;
+// Servir archivos estáticos
+app.use(express.static("public"));
+
+// Crear servidor HTTP
 const server = http.createServer(app);
-const WebSocket = require("ws");
+
+// Servidor WebSocket usando el mismo servidor HTTP
+const wss = new WebSocket.Server({ server });
+
+server.listen(PORT, () => {
+  console.log(`Servidor iniciado en el puerto ${PORT}`);
+});
 
 let keepAliveId;
 
-const wss =
-  process.env.NODE_ENV === "production"
-    ? new WebSocket.Server({ server })
-    : new WebSocket.Server({ port: 5001 });
-
-server.listen(serverPort);
-console.log(`Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`);
-
-wss.on("connection", function (ws, req) {
-  console.log("Connection Opened");
-  console.log("Client size: ", wss.clients.size);
-
-  if (wss.clients.size === 1) {
-    console.log("first connection. starting keepalive");
-    keepServerAlive();
-  }
-
-  ws.on("message", (data) => {
-    let stringifiedData = data.toString();
-    if (stringifiedData === 'pong') {
-      console.log('keepAlive');
-      return;
-    }
-    broadcast(ws, stringifiedData, false);
-  });
-
-  ws.on("close", (data) => {
-    console.log("closing connection");
-
-    if (wss.clients.size === 0) {
-      console.log("last client disconnected, stopping keepAlive interval");
-      clearInterval(keepAliveId);
-    }
-  });
-});
-
-// Implement broadcast function because of ws doesn't have it
-const broadcast = (ws, message, includeSelf) => {
-  if (includeSelf) {
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
-  } else {
-    wss.clients.forEach((client) => {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
-  }
-};
-
-/**
- * Sends a ping message to all connected clients every 50 seconds
- */
- const keepServerAlive = () => {
+// Función de keepalive para mantener las conexiones activas
+const keepServerAlive = () => {
   keepAliveId = setInterval(() => {
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send('ping');
+        client.send("ping");
       }
     });
   }, 50000);
 };
 
+wss.on("connection", (ws) => {
+  console.log("Cliente conectado");
 
-app.get('/', (req, res) => {
-    res.send('Hello World!');
+  if (wss.clients.size === 1) {
+    console.log("Primera conexión: Iniciando keepalive");
+    keepServerAlive();
+  }
+
+  ws.on("message", (data) => {
+    const message = data.toString();
+    console.log("Mensaje recibido:", message);
+
+    if (message === "pong") {
+      console.log("Respuesta keepalive recibida");
+      return;
+    }
+
+    // Broadcast del mensaje
+    broadcast(ws, message, false);
+  });
+
+  ws.on("close", () => {
+    console.log("Cliente desconectado");
+
+    if (wss.clients.size === 0) {
+      console.log("Último cliente desconectado. Deteniendo keepalive.");
+      clearInterval(keepAliveId);
+    }
+  });
 });
+
+// Función de broadcast
+const broadcast = (ws, message, includeSelf) => {
+  wss.clients.forEach((client) => {
+    if ((includeSelf || client !== ws) && client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+};
+
+// Ruta principal
+app.get("/", (req, res) => {
+  res.send("Servidor WebSocket funcionando en Render!");
+});
+
